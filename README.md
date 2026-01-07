@@ -8,13 +8,14 @@ composer require wjbecker/current-rms-php
 
 ## Features
 
-- **Framework Agnostic**: Works standalone or with Laravel
-- **Type-Safe DTOs**: Strongly-typed data objects
+- **Framework Agnostic**: Works standalone or with Laravel (zero required dependencies)
+- **Fluent Query Builder**: Build queries with chainable methods instead of arrays
+- **Memory-Efficient Pagination**: Generator-based cursor for processing large datasets
+- **Custom Collection Class**: Lightweight collection with map, filter, reduce, and more
+- **Paginator with Navigation**: Page metadata with next/previous navigation
+- **Type-Safe DTOs**: Strongly-typed data objects with helper methods
 - **Guzzle HTTP Client**: Built on Guzzle for reliable HTTP requests
-- **Laravel Integration**: Optional service provider with auto-discovery
-- **Facade Support**: Clean Laravel facade for easy access
-- **Custom Query Encoding**: Handles Current RMS array parameters correctly
-- **Full CRUD Operations**: Complete endpoint coverage
+- **Laravel Integration**: Optional service provider with auto-discovery and facade
 
 ---
 
@@ -96,20 +97,258 @@ class OpportunityController extends Controller
 ```php
 use Wjbecker\CurrentRms\Facades\CurrentRms;
 
-// List opportunities
 $opportunities = CurrentRms::opportunities()->list();
-
-// Find specific opportunity
 $opportunity = CurrentRms::opportunities()->find(123);
+```
 
-// Create opportunity
-$opportunity = CurrentRms::opportunities()->create([
-    'subject' => 'New Event',
-    'member_id' => 456
-]);
+---
 
-// Direct API calls
-$orders = CurrentRms::get('/orders', ['status' => 'active']);
+## Query Builder
+
+Build queries with a fluent interface instead of awkward arrays:
+
+```php
+// Find confirmed opportunities for a specific member
+$orders = $client->opportunities()->query()
+    ->whereState(3)  // Confirmed
+    ->forMember(456)
+    ->createdAfter('2025-01-01')
+    ->with('member', 'venue')
+    ->get();
+
+// Search by subject
+$results = $client->opportunities()->query()
+    ->whereContains('subject', 'Wedding')
+    ->whereBetween('starts_at', '2025-06-01', '2025-08-31')
+    ->get();
+
+// Filter opportunity items
+$rentalItems = $client->opportunityItems()->query()
+    ->whereEquals('transaction_type', 1)  // Rentals
+    ->forOpportunity(123)
+    ->with('item')
+    ->get();
+
+// Complex queries with Ransack predicates
+$items = $client->opportunityItems()->query()
+    ->where('quantity', 'gteq', 5)           // quantity >= 5
+    ->where('item_id', 'in', [1, 2, 3])      // item_id in array
+    ->whereNotNull('charge_total')
+    ->get();
+```
+
+### Available Query Methods
+
+```php
+// Comparison operators
+->whereEquals('field', $value)
+->whereNotEquals('field', $value)
+->whereGreaterThan('field', $value)
+->whereGreaterThanOrEqual('field', $value)
+->whereLessThan('field', $value)
+->whereLessThanOrEqual('field', $value)
+
+// String matching
+->whereContains('field', 'value')       // LIKE %value%
+->whereContainsAll('field', ['a', 'b']) // Contains ALL values (AND)
+->whereContainsAny('field', ['a', 'b']) // Contains ANY value (OR)
+->whereNotContains('field', 'value')    // Does NOT contain
+->whereStartsWith('field', 'value')
+->whereNotStartsWith('field', 'value')
+->whereEndsWith('field', 'value')
+->whereNotEndsWith('field', 'value')
+->whereMatches('field', '%pattern%')    // SQL LIKE pattern
+->whereNotMatches('field', '%pattern%')
+
+// Array/Null/Presence checks
+->whereIn('field', [1, 2, 3])
+->whereNotIn('field', [1, 2, 3])
+->whereNull('field')
+->whereNotNull('field')
+->wherePresent('field')    // Not null AND not blank
+->whereBlank('field')      // Null OR empty string
+->whereTrue('field')
+->whereFalse('field')
+
+// Date ranges
+->whereBetween('field', $start, $end)
+->createdAfter('2025-01-01')
+->createdBefore('2025-12-31')
+->createdBetween('2025-01-01', '2025-12-31')
+->updatedAfter('2025-01-01')
+
+// Convenience methods
+->whereState(3)           // Filter by state
+->forMember($memberId)    // Filter by member
+->forOpportunity($id)     // Filter by opportunity
+->forItem($itemId)        // Filter by item
+
+// Includes and pagination
+->with('item', 'member')  // Include associations
+->perPage(50)             // Set page size
+```
+
+### Query Execution Methods
+
+```php
+// Get a Collection of results
+$results = $query->get();
+
+// Get just the first result
+$item = $query->first();
+
+// Get paginated results with metadata
+$page = $query->paginate(1);
+
+// Iterate through all pages (memory-efficient)
+foreach ($query->cursor() as $item) {
+    // Process one item at a time
+}
+
+// Check existence
+$exists = $query->exists();
+
+// Get count (requires API call)
+$count = $query->count();
+```
+
+---
+
+## Pagination
+
+### Basic Pagination
+
+```php
+// Get a specific page
+$page = $client->opportunities()->paginate(page: 1, perPage: 25);
+
+// Access items on current page
+foreach ($page->items() as $opportunity) {
+    echo $opportunity->subject;
+}
+
+// Check pagination metadata
+echo "Page {$page->currentPage()} of {$page->lastPage()}";
+echo "Total items: {$page->total()}";
+echo "Has more pages: " . ($page->hasMorePages() ? 'yes' : 'no');
+```
+
+### Page Navigation
+
+```php
+// Navigate between pages
+$nextPage = $page->nextPage();
+$prevPage = $page->previousPage();
+$specificPage = $page->goToPage(5);
+```
+
+### Memory-Efficient Iteration (Generators)
+
+For large datasets, use the `cursor()` method which yields items one at a time:
+
+```php
+// Process thousands of items without loading all into memory
+foreach ($client->opportunityItems()->cursor() as $item) {
+    echo "{$item->getItemName()} - Qty: {$item->quantity}\n";
+    // Each item is fetched as needed, pages are loaded lazily
+}
+
+// With filters via query builder
+foreach ($client->opportunityItems()->query()->forOpportunity(123)->cursor() as $item) {
+    processItem($item);
+}
+```
+
+### Pagination Limits
+
+- **Opportunities**: Max 25 items per page
+- **Other Endpoints**: Max 100 items per page (default)
+
+---
+
+## Collections
+
+The package includes a lightweight Collection class:
+
+```php
+$opportunities = $client->opportunities()->list();
+
+// Filtering
+$confirmed = $opportunities->filter(fn($o) => $o->state === 3);
+$drafts = $opportunities->where('state', 1);
+
+// Mapping
+$titles = $opportunities->map(fn($o) => $o->getTitle());
+$subjects = $opportunities->pluck('subject');
+
+// Aggregation
+$total = $opportunities->sum('charge_total');
+$average = $opportunities->avg('charge_total');
+
+// Iteration
+$opportunities->each(function($o) {
+    echo $o->subject;
+});
+
+// Sorting
+$sorted = $opportunities->sortBy('starts_at');
+
+// Other operations
+$first = $opportunities->first();
+$last = $opportunities->last();
+$count = $opportunities->count();
+$chunk = $opportunities->take(5);
+
+// Convert to array
+$array = $opportunities->toArray();
+```
+
+---
+
+## Lazy Loading Relationships
+
+DTOs returned from endpoints support lazy loading of related resources:
+
+```php
+// Get opportunities
+$opportunities = $client->opportunities()->list();
+
+foreach ($opportunities as $opportunity) {
+    // Lazy load items for each opportunity (makes API call)
+    $items = $opportunity->items()->get();
+
+    foreach ($items as $item) {
+        echo "{$item->name} - Qty: {$item->quantity}\n";
+    }
+}
+```
+
+### How It Works
+
+When you retrieve data through endpoints (`list()`, `find()`, `create()`, etc.), the client reference is automatically injected into the DTOs. This enables the `items()` method to make API calls on your behalf.
+
+```php
+// These all support lazy loading
+$opportunity = $client->opportunities()->find(123);
+$opportunity = $client->opportunities()->list()->first();
+$opportunity = $client->opportunities()->query()->whereState(3)->first();
+
+// Access items without knowing the opportunity ID
+$items = $opportunity->items()->get();
+$items = $opportunity->items()->query()->whereEquals('transaction_type', 1)->get();
+```
+
+### When Lazy Loading is NOT Available
+
+If you create a DTO manually without the client, lazy loading will throw an exception:
+
+```php
+// Manual creation - no client available
+$opportunity = OpportunityData::from(['id' => 123]);
+$opportunity->items(); // Throws RuntimeException
+
+// Use the explicit endpoint instead
+$items = $client->opportunities()->items(123)->list();
 ```
 
 ---
@@ -122,9 +361,9 @@ $orders = CurrentRms::get('/orders', ['status' => 'active']);
 // List all opportunities
 $opportunities = $client->opportunities()->list();
 
-// List with filters
+// List with filters (legacy array syntax)
 $opportunities = $client->opportunities()->list([
-    'q' => ['state_eq' => 1]
+    'q[state_eq]' => 1
 ]);
 
 // Find specific opportunity
@@ -164,15 +403,21 @@ $newOpportunity = $client->opportunities()->clone(123);
 // List all opportunity items
 $items = $client->opportunityItems()->list();
 
+// List with includes (item data, assets, etc.)
+$items = $client->opportunityItems()->list([], ['item', 'item_assets']);
+
 // List items for specific opportunity (scoped)
 $items = $client->opportunities()->items(123)->list();
 
 // Find specific item
 $item = $client->opportunities()->items(123)->find(456);
 
+// Find with includes
+$item = $client->opportunities()->items(123)->find(456, ['item', 'rate_definition']);
+
 // Create item
 $item = $client->opportunities()->items(123)->create([
-    'product_id' => 789,
+    'item_id' => 789,
     'quantity' => 5
 ]);
 
@@ -224,42 +469,80 @@ $client = new CurrentRmsClient(
 
 ## Data Objects
 
+All endpoints return strongly-typed Data Transfer Objects (DTOs) with helper methods.
+
 ### OpportunityData
 
 ```php
+// Properties (all nullable)
 $opportunity->id;
 $opportunity->subject;
-$opportunity->state;
+$opportunity->state;              // State ID (1=draft, 2=quote, 3=order, etc.)
+$opportunity->state_name;         // "Draft", "Quote", "Order", etc.
 $opportunity->status;
 $opportunity->starts_at;
 $opportunity->ends_at;
+$opportunity->charge_total;
+$opportunity->opportunity_items;  // Array of OpportunityItemData (if included)
 
 // Helper methods
-$opportunity->isDraft();     // Check if in draft state
-$opportunity->isOpen();      // Check if status is open
-$opportunity->getTitle();    // Get subject/title
-$opportunity->getMemberName();
-$opportunity->getOwnerName();
-$opportunity->getCustomField('key');
+$opportunity->isDraft();          // Check if in draft state
+$opportunity->isOpen();           // Check if status is open
+$opportunity->getTitle();         // Get subject/title
+$opportunity->getMemberName();    // Get customer name from nested data
+$opportunity->getOwnerName();     // Get owner name from nested data
+$opportunity->getCustomField('key'); // Get custom field value
+
+// Lazy loading (when retrieved via endpoint)
+$opportunity->items();            // Get ScopedOpportunityItemsEndpoint
+$opportunity->items()->get();     // Fetch all items
+$opportunity->items()->query()->whereEquals('transaction_type', 1)->get();
 ```
 
 ### OpportunityItemData
 
 ```php
+// Properties (all nullable)
 $item->id;
 $item->opportunity_id;
-$item->product_id;
+$item->item_id;               // Product/Item ID
+$item->transaction_type;      // 1=Rental, 2=Sale, 3=Service
 $item->quantity;
-$item->item_type;
 $item->name;
-$item->price;
+$item->charge;
+$item->item;                  // ItemData object (if included)
 
 // Helper methods
-$item->isRental();
-$item->isSale();
-$item->isService();
-$item->getProductName();
-$item->getProductSku();
+$item->isRental();            // Check if rental (transaction_type === 1)
+$item->isSale();              // Check if sale (transaction_type === 2)
+$item->isService();           // Check if service (transaction_type === 3)
+$item->getItemName();         // Get item name (from item or name field)
+$item->getItemBarcode();      // Get barcode (from item or sku field)
+$item->getCustomField('key'); // Get custom field value
+```
+
+### ItemData (Product/Item)
+
+```php
+// Available when including 'item' association
+$item = $opportunityItem->item;
+
+// Properties
+$item->id;
+$item->name;
+$item->description;
+$item->barcode;
+$item->active;
+$item->replacement_charge;
+$item->weight;
+
+// Helper methods
+$item->isActive();
+$item->isAccessoryOnly();
+$item->isDiscountable();
+$item->getProductGroupName();
+$item->getTaxClassName();
+$item->getIconUrl();
 $item->getCustomField('key');
 ```
 
@@ -268,11 +551,7 @@ $item->getCustomField('key');
 ## Testing
 
 ```bash
-# Run tests from the package directory
 ./vendor/bin/pest
-
-# Or from Laravel project
-./vendor/bin/pest tests/Unit/CurrentRms
 ```
 
 ---
@@ -291,12 +570,18 @@ $item->getCustomField('key');
 │   │   └── Exceptions/
 │   ├── Data/
 │   │   ├── OpportunityData.php
-│   │   └── OpportunityItemData.php
+│   │   ├── OpportunityItemData.php
+│   │   └── ItemData.php
 │   ├── Endpoints/
 │   │   ├── BaseEndpoint.php
 │   │   ├── OpportunitiesEndpoint.php
 │   │   ├── OpportunityItemsEndpoint.php
 │   │   └── ScopedOpportunityItemsEndpoint.php
+│   ├── Query/
+│   │   └── QueryBuilder.php
+│   ├── Support/
+│   │   ├── Collection.php
+│   │   └── Paginator.php
 │   ├── Facades/
 │   │   └── CurrentRms.php
 │   └── CurrentRmsServiceProvider.php
