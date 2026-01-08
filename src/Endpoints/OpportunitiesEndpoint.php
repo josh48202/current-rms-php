@@ -33,6 +33,31 @@ class OpportunitiesEndpoint extends BaseEndpoint
     }
 
     /**
+     * Finalize check-in for an opportunity.
+     *
+     * This will finalize all opportunity item assets at checked-in status,
+     * setting their status to Completed where the quantity outstanding is zero.
+     *
+     * Example structure:
+     * [
+     *   'return' => [
+     *     'return_at' => '2025-01-15T18:00:00.000Z'
+     *   ],
+     *   'move_outstanding' => false,
+     *   'complete_sales_items' => false
+     * ]
+     *
+     * @param  int  $id  The opportunity ID
+     * @param  array<string, mixed>  $data
+     */
+    public function finalizeCheckIn(int $id, array $data): OpportunityData
+    {
+        $response = $this->post("/{$id}/finalise", $data);
+
+        return OpportunityData::from($response['opportunity']);
+    }
+
+    /**
      * Get a scoped endpoint for opportunity items within a specific opportunity.
      *
      * This allows you to work with nested routes:

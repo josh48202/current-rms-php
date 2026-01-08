@@ -395,6 +395,15 @@ $opportunity = $client->opportunities()->checkout([
 
 // Clone opportunity
 $newOpportunity = $client->opportunities()->clone(123);
+
+// Finalize check-in
+$opportunity = $client->opportunities()->finalizeCheckIn(123, [
+    'return' => [
+        'return_at' => '2025-01-15T18:00:00.000Z'
+    ],
+    'move_outstanding' => false,
+    'complete_sales_items' => false,
+]);
 ```
 
 ### Opportunity Items Endpoint

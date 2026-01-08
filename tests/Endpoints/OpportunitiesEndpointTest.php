@@ -166,6 +166,34 @@ it('can clone an opportunity', function () {
     expect($opportunity->id)->toBe(2);
 });
 
+it('can finalize check-in for an opportunity', function () {
+    $mockClient = mockGuzzleClient([
+        new Response(200, [], json_encode([
+            'opportunity' => [
+                'id' => 1,
+                'subject' => 'Finalized Opportunity',
+                'state' => 3,
+            ],
+        ])),
+    ]);
+
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+    $client->setHttpClient($mockClient);
+
+    $opportunity = $client->opportunities()->finalizeCheckIn(1, [
+        'return' => [
+            'return_at' => '2025-01-15T18:00:00.000Z',
+        ],
+        'move_outstanding' => false,
+        'complete_sales_items' => true,
+    ]);
+
+    expect($opportunity)->toBeInstanceOf(OpportunityData::class);
+    expect($opportunity->id)->toBe(1);
+    expect($opportunity->subject)->toBe('Finalized Opportunity');
+});
+
 it('has access to raw client', function () {
     $auth = new ApiKeyAuth('mycompany', 'test-token');
     $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
