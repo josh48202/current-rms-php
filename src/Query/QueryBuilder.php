@@ -24,6 +24,18 @@ class QueryBuilder
     protected array $filters = [];
 
     /**
+     * Groups for complex AND/OR queries.
+     *
+     * @var array<int, array<string, mixed>>
+     */
+    protected array $groups = [];
+
+    /**
+     * The combinator for groups (and/or).
+     */
+    protected ?string $groupCombinator = null;
+
+    /**
      * Associations to include.
      *
      * @var array<string>
@@ -387,6 +399,87 @@ class QueryBuilder
     }
 
     /**
+     * Add conditions combined with OR logic.
+     *
+     * Each where* call inside the callback creates a separate group.
+     * Groups are combined with OR. Use group() to AND multiple conditions.
+     *
+     * Example - name contains "Bill" OR name contains "Fred":
+     * ```php
+     * $query->whereOr(function ($or) {
+     *     $or->whereContains('name', 'Bill');
+     *     $or->whereContains('name', 'Fred');
+     * });
+     * ```
+     *
+     * Example - (name = "Bill" AND active = true) OR (name = "Fred" AND active = true):
+     * ```php
+     * $query->whereOr(function ($or) {
+     *     $or->group(function ($g) {
+     *         $g->whereEquals('name', 'Bill');
+     *         $g->whereTrue('active');
+     *     });
+     *     $or->group(function ($g) {
+     *         $g->whereEquals('name', 'Fred');
+     *         $g->whereTrue('active');
+     *     });
+     * });
+     * ```
+     *
+     * @param  callable(GroupBuilder): void  $callback
+     * @return $this
+     */
+    public function whereOr(callable $callback): static
+    {
+        return $this->addGroupedConditions('or', $callback);
+    }
+
+    /**
+     * Add conditions combined with AND logic.
+     *
+     * Each where* call inside the callback creates a separate group.
+     * Groups are combined with AND. Use group() to AND multiple conditions.
+     *
+     * Example - name contains "Bill" AND description contains "test":
+     * ```php
+     * $query->whereAnd(function ($and) {
+     *     $and->whereContains('name', 'Bill');
+     *     $and->whereContains('description', 'test');
+     * });
+     * ```
+     *
+     * @param  callable(GroupBuilder): void  $callback
+     * @return $this
+     */
+    public function whereAnd(callable $callback): static
+    {
+        return $this->addGroupedConditions('and', $callback);
+    }
+
+    /**
+     * Add grouped conditions with a combinator.
+     *
+     * @param  string  $combinator  'and' or 'or'
+     * @param  callable(GroupBuilder): void  $callback
+     * @return $this
+     */
+    protected function addGroupedConditions(string $combinator, callable $callback): static
+    {
+        $builder = new GroupBuilder();
+        $callback($builder);
+
+        if ($builder->hasGroups()) {
+            $this->groupCombinator = $combinator;
+
+            foreach ($builder->getGroups() as $group) {
+                $this->groups[] = $group;
+            }
+        }
+
+        return $this;
+    }
+
+    /**
      * Add a date range condition (between two dates).
      *
      * @param  string  $field
@@ -582,6 +675,22 @@ class QueryBuilder
     {
         $params = $this->filters;
 
+        // Add grouping parameters if any groups exist
+        if (! empty($this->groups)) {
+            $params['q'] = $params['q'] ?? [];
+
+            // Add each group
+            $params['q']['g'] = [];
+            foreach ($this->groups as $index => $group) {
+                $params['q']['g'][$index] = $group;
+            }
+
+            // Add the combinator
+            if ($this->groupCombinator !== null) {
+                $params['q']['m'] = $this->groupCombinator;
+            }
+        }
+
         if (! empty($this->includes)) {
             $params['include'] = $this->includes;
         }
@@ -621,7 +730,21 @@ class QueryBuilder
      */
     public function paginate(int $page = 1): Paginator
     {
-        return $this->endpoint->paginate($page, $this->perPage ?? 25, $this->filters, $this->includes);
+        $filters = $this->filters;
+
+        // Include grouping parameters in filters for pagination
+        if (! empty($this->groups)) {
+            $filters['q'] = $filters['q'] ?? [];
+            $filters['q']['g'] = [];
+            foreach ($this->groups as $index => $group) {
+                $filters['q']['g'][$index] = $group;
+            }
+            if ($this->groupCombinator !== null) {
+                $filters['q']['m'] = $this->groupCombinator;
+            }
+        }
+
+        return $this->endpoint->paginate($page, $this->perPage ?? 25, $filters, $this->includes);
     }
 
     /**

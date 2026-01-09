@@ -419,3 +419,150 @@ it('checks not exists', function () {
 
     expect($exists)->toBeFalse();
 });
+
+// Grouping tests
+
+it('builds simple whereOr with multiple conditions', function () {
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+
+    $query = $client->opportunities()->query()
+        ->whereOr(function ($or) {
+            $or->whereContains('name', 'Bill');
+            $or->whereContains('name', 'Fred');
+        });
+
+    expect($query->toArray())->toBe([
+        'q' => [
+            'g' => [
+                0 => ['name_cont' => 'Bill'],
+                1 => ['name_cont' => 'Fred'],
+            ],
+            'm' => 'or',
+        ],
+    ]);
+});
+
+it('builds simple whereAnd with multiple conditions', function () {
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+
+    $query = $client->opportunities()->query()
+        ->whereAnd(function ($and) {
+            $and->whereContains('name', 'Bill');
+            $and->whereContains('description', 'test');
+        });
+
+    expect($query->toArray())->toBe([
+        'q' => [
+            'g' => [
+                0 => ['name_cont' => 'Bill'],
+                1 => ['description_cont' => 'test'],
+            ],
+            'm' => 'and',
+        ],
+    ]);
+});
+
+it('builds whereOr with grouped conditions', function () {
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+
+    // (name = Bill AND active = true) OR (name = Fred AND active = true)
+    $query = $client->opportunities()->query()
+        ->whereOr(function ($or) {
+            $or->group(function ($g) {
+                $g->whereEquals('name', 'Bill');
+                $g->whereTrue('active');
+            });
+            $or->group(function ($g) {
+                $g->whereEquals('name', 'Fred');
+                $g->whereTrue('active');
+            });
+        });
+
+    expect($query->toArray())->toBe([
+        'q' => [
+            'g' => [
+                0 => ['name_eq' => 'Bill', 'active_true' => true],
+                1 => ['name_eq' => 'Fred', 'active_true' => true],
+            ],
+            'm' => 'or',
+        ],
+    ]);
+});
+
+it('builds whereOr with various predicates', function () {
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+
+    $query = $client->opportunities()->query()
+        ->whereOr(function ($or) {
+            $or->whereEquals('state', 1);
+            $or->whereGreaterThan('amount', 100);
+            $or->whereIn('type', ['rental', 'sale']);
+        });
+
+    expect($query->toArray())->toBe([
+        'q' => [
+            'g' => [
+                0 => ['state_eq' => 1],
+                1 => ['amount_gt' => 100],
+                2 => ['type_in' => ['rental', 'sale']],
+            ],
+            'm' => 'or',
+        ],
+    ]);
+});
+
+it('combines regular filters with grouped conditions', function () {
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+
+    $query = $client->opportunities()->query()
+        ->whereState(3)  // Regular filter
+        ->whereOr(function ($or) {
+            $or->whereContains('name', 'Bill');
+            $or->whereContains('name', 'Fred');
+        })
+        ->with('member')
+        ->perPage(50);
+
+    expect($query->toArray())->toBe([
+        'q[state_eq]' => 3,
+        'q' => [
+            'g' => [
+                0 => ['name_cont' => 'Bill'],
+                1 => ['name_cont' => 'Fred'],
+            ],
+            'm' => 'or',
+        ],
+        'include' => ['member'],
+        'per_page' => 50,
+    ]);
+});
+
+it('builds grouped conditions with whereBetween', function () {
+    $auth = new ApiKeyAuth('mycompany', 'test-token');
+    $client = new CurrentRmsClient('https://api.current-rms.com/api/v1', $auth);
+
+    $query = $client->opportunities()->query()
+        ->whereOr(function ($or) {
+            $or->group(function ($g) {
+                $g->whereBetween('starts_at', '2025-01-01', '2025-06-30');
+            });
+            $or->group(function ($g) {
+                $g->whereBetween('starts_at', '2025-07-01', '2025-12-31');
+            });
+        });
+
+    expect($query->toArray())->toBe([
+        'q' => [
+            'g' => [
+                0 => ['starts_at_gteq' => '2025-01-01', 'starts_at_lteq' => '2025-06-30'],
+                1 => ['starts_at_gteq' => '2025-07-01', 'starts_at_lteq' => '2025-12-31'],
+            ],
+            'm' => 'or',
+        ],
+    ]);
+});

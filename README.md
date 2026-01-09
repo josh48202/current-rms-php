@@ -188,6 +188,70 @@ $items = $client->opportunityItems()->query()
 ->perPage(50)             // Set page size
 ```
 
+### Complex Queries with AND/OR Logic
+
+For more complex queries, use `whereOr()` and `whereAnd()` to group conditions:
+
+```php
+// Simple OR: name contains "Bill" OR name contains "Fred"
+$results = $client->opportunities()->query()
+    ->whereOr(function ($or) {
+        $or->whereContains('name', 'Bill');
+        $or->whereContains('name', 'Fred');
+    })
+    ->get();
+
+// Simple AND: state = 3 AND member_id = 123 (grouped)
+$results = $client->opportunities()->query()
+    ->whereAnd(function ($and) {
+        $and->whereEquals('state', 3);
+        $and->whereEquals('member_id', 123);
+    })
+    ->get();
+
+// Complex: (name = "Bill" AND active = true) OR (name = "Fred" AND active = true)
+$results = $client->opportunities()->query()
+    ->whereOr(function ($or) {
+        $or->group(function ($g) {
+            $g->whereEquals('name', 'Bill');
+            $g->whereTrue('active');
+        });
+        $or->group(function ($g) {
+            $g->whereEquals('name', 'Fred');
+            $g->whereTrue('active');
+        });
+    })
+    ->get();
+
+// Combine regular filters with grouped conditions
+$results = $client->opportunities()->query()
+    ->whereState(3)  // Regular filter (always applied)
+    ->whereOr(function ($or) {
+        $or->whereContains('subject', 'Wedding');
+        $or->whereContains('subject', 'Corporate');
+    })
+    ->with('member')
+    ->get();
+
+// Date range OR queries
+$results = $client->opportunities()->query()
+    ->whereOr(function ($or) {
+        $or->group(function ($g) {
+            $g->whereBetween('starts_at', '2025-01-01', '2025-06-30');
+        });
+        $or->group(function ($g) {
+            $g->whereBetween('starts_at', '2025-07-01', '2025-12-31');
+        });
+    })
+    ->get();
+```
+
+**How it works:**
+- Each `where*` call inside `whereOr()`/`whereAnd()` creates a separate condition group
+- Groups are combined with OR (for `whereOr`) or AND (for `whereAnd`)
+- Use `group()` to bundle multiple conditions that should be ANDed together within a group
+- Regular filters (outside of whereOr/whereAnd) are always applied in addition to grouped conditions
+
 ### Query Execution Methods
 
 ```php
@@ -587,7 +651,8 @@ $item->getCustomField('key');
 │   │   ├── OpportunityItemsEndpoint.php
 │   │   └── ScopedOpportunityItemsEndpoint.php
 │   ├── Query/
-│   │   └── QueryBuilder.php
+│   │   ├── QueryBuilder.php
+│   │   └── GroupBuilder.php
 │   ├── Support/
 │   │   ├── Collection.php
 │   │   └── Paginator.php
